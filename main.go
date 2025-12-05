@@ -243,12 +243,6 @@ func (rl *RateLimiter) storeNFT(email, nftID, nftName string) error {
 
 // proxyHandler: main entry point for ALL blockchain traffic.
 func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	apiKey := r.Header.Get(apiKeyHeader)
-	if apiKey == "" {
-		http.Error(w, `{"error":"API key required in `+apiKeyHeader+` header"}`, http.StatusUnauthorized)
-		return
-	}
-
 	path := r.URL.Path
 	billable := isBillable(path)
 
@@ -258,6 +252,12 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if billable {
+		apiKey := r.Header.Get(apiKeyHeader)
+		if apiKey == "" {
+			http.Error(w, `{"error":"API key required in `+apiKeyHeader+` header"}`, http.StatusUnauthorized)
+			return
+		}
+
 		user, err = rl.validateAndIncrement(apiKey)
 	}
 
