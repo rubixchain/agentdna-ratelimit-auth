@@ -248,26 +248,25 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		user *User
-		err  error
+		err  error = nil
 	)
 
+	apiKey := r.Header.Get(apiKeyHeader)
 	if billable {
-		apiKey := r.Header.Get(apiKeyHeader)
 		if apiKey == "" {
 			http.Error(w, `{"error":"API key required in `+apiKeyHeader+` header"}`, http.StatusUnauthorized)
 			return
 		}
 
 		user, err = rl.validateAndIncrement(apiKey)
-	}
-
-	if err != nil {
-		status := http.StatusUnauthorized
-		if err.Error() == "rate limit exceeded" {
-			status = http.StatusTooManyRequests
+		if err != nil {
+			status := http.StatusUnauthorized
+			if err.Error() == "rate limit exceeded" {
+				status = http.StatusTooManyRequests
+			}
+			http.Error(w, `{"error":"`+err.Error()+`"}`, status)
+			return
 		}
-		http.Error(w, `{"error":"`+err.Error()+`"}`, status)
-		return
 	}
 
 	// SPECIAL HANDLING: For /api/deploy-nft, extract and store NFT info
@@ -291,8 +290,10 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 			// Store in nfts table with email foreign key
 			if err := rl.storeNFT(user.Email, payload.NFT, agentName); err != nil {
 				log.Printf("Failed to store NFT for %s: %v", user.Email, err)
+				return
 			} else {
 				log.Printf("✅ Stored NFT: id=%s, name=%s, email=%s", payload.NFT, agentName, user.Email)
+				return
 			}
 		}
 	}
