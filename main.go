@@ -298,11 +298,6 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pass user metadata to blockchain node
-	r.Header.Set("X-User-Email", user.Email)
-	r.Header.Set("X-Request-Count", fmt.Sprintf("%d/%d", user.RequestCount, maxRequests))
-	r.Header.Set("X-Billable", fmt.Sprintf("%t", isBillable(path)))
-
 	// Proxy to blockchain node
 	rl.proxy.ServeHTTP(w, r)
 }
