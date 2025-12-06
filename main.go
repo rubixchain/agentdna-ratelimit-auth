@@ -293,7 +293,6 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			} else {
 				log.Printf("✅ Stored NFT: id=%s, name=%s, email=%s", payload.NFT, agentName, user.Email)
-				return
 			}
 		}
 	}
