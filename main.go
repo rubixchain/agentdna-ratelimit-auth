@@ -359,6 +359,41 @@ func (rl *RateLimiter) adminAddUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (rl *RateLimiter) getNFTs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rows, err := rl.db.Query(
+		`SELECT nft_id, nft_name FROM nfts`,
+	)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var nfts []map[string]string
+	for rows.Next() {
+		var nftID, nftName string
+		if err := rows.Scan(&nftID, &nftName); err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+
+		nfts = append(nfts, map[string]string{
+			"nft_id":   nftID,
+			"nft_name": nftName,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nfts": nfts,
+	})
+}
+
 func (rl *RateLimiter) getNFTByEmail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -410,7 +445,8 @@ func main() {
     // Management endpoints FIRST (specific routes)
     http.HandleFunc("/healthz", rl.healthz)
     http.HandleFunc("/admin/add-user", rl.adminAddUser)
-    http.HandleFunc("/get-nft-by-email", rl.getNFTByEmail)  // ← Now works!
+    http.HandleFunc("/get-nft-by-email", rl.getNFTByEmail)
+	http.HandleFunc("/get-nfts", rl.getNFTs)
 
     // Catch ALL OTHER blockchain traffic LAST (catch-all)
     http.HandleFunc("/", rl.proxyHandler)  // ← Only non-management paths
