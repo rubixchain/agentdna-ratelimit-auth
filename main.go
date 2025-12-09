@@ -76,6 +76,10 @@ func initConfig() (string, *url.URL) {
 	return dbFile, u
 }
 
+func generateAPIKey() string {
+	return uuid.NewString()
+}
+
 func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
@@ -437,6 +441,33 @@ func (rl *RateLimiter) getNFTByEmail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (rl *RateLimiter) getBalanceCredits(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	email := r.URL.Query().Get("email")
+	if email == "" {
+		http.Error(w, "Email query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var requestCount uint
+	rows := rl.db.QueryRow("SELECT request_count FROM users WHERE email = ?", email)
+	if err := rows.Scan(&requestCount); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"email":  email,
+		"credits": requestCount,
+	})
+}
+
 func main() {
     dbFile, backendURL := initConfig()
     rl := NewRateLimiter(dbFile, backendURL)
@@ -447,6 +478,7 @@ func main() {
     http.HandleFunc("/admin/add-user", rl.adminAddUser)
     http.HandleFunc("/get-nft-by-email", rl.getNFTByEmail)
 	http.HandleFunc("/get-nfts", rl.getNFTs)
+	http.HandleFunc("/get-balance-credits", rl.getBalanceCredits)
 
     // Catch ALL OTHER blockchain traffic LAST (catch-all)
     http.HandleFunc("/", rl.proxyHandler)  // ← Only non-management paths
