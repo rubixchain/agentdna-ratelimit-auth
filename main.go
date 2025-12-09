@@ -462,13 +462,16 @@ func (rl *RateLimiter) getBalanceCredits(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var requestCount uint
-	rows := rl.db.QueryRow("SELECT request_count FROM users WHERE email = ?", email)
-	if err := rows.Scan(&requestCount); err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
+	var requestCount int
+    row := rl.db.QueryRow("SELECT request_count FROM users WHERE email = ?", email)
+    if err := row.Scan(&requestCount); err != nil {
+        if err == sql.ErrNoRows {
+            http.Error(w, "User not found", http.StatusNotFound)
+            return
+        }
+        http.Error(w, "Database error", http.StatusInternalServerError)
+        return
+    }
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
