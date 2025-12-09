@@ -24,6 +24,8 @@ import (
 const (
 	maxRequests  = 100
 	apiKeyHeader = "X-API-Key"
+	agentDescriptionHeader = "X-Agent-Description"
+	agentRepoHeader = "X-Agent-Repo"
 )
 
 type User struct {
@@ -107,6 +109,8 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 			nft_id TEXT NOT NULL,
 			nft_name TEXT,
 			email TEXT NOT NULL,
+			agent_description TEXT,
+        	agent_repo TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_nft_id ON nfts(nft_id);
@@ -235,12 +239,14 @@ func extractAgentName(nftData string) string {
 	return agentName
 }
 
-func (rl *RateLimiter) storeNFT(email, nftID, nftName string) error {
+func (rl *RateLimiter) storeNFT(email, nftID, nftName, agentDescription, agentRepo string) error {
 	_, err := rl.db.Exec(
-		`INSERT INTO nfts (nft_id, nft_name, email) VALUES (?, ?, ?)`,
+		`INSERT INTO nfts (nft_id, nft_name, email, agent_description, agent_repo) VALUES (?, ?, ?, ?, ?)`,
 		nftID,
 		nftName,
 		email,
+		agentDescription,
+		agentRepo,
 	)
 	return err
 }
@@ -273,6 +279,9 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	agentDescription := r.Header.Get(agentDescriptionHeader)
+	agentRepo := r.Header.Get(agentRepoHeader)
+
 	// SPECIAL HANDLING: For /api/deploy-nft, extract and store NFT info
 	if strings.Contains(path, "/api/deploy-nft") && r.Method == http.MethodPost {
 		// Read and buffer the body
@@ -292,7 +301,7 @@ func (rl *RateLimiter) proxyHandler(w http.ResponseWriter, r *http.Request) {
 			// Extract agent_name from nftData
 			agentName := extractAgentName(payload.NFTData)
 			// Store in nfts table with email foreign key
-			if err := rl.storeNFT(user.Email, payload.NFT, agentName); err != nil {
+			if err := rl.storeNFT(user.Email, payload.NFT, agentName, agentDescription, agentRepo); err != nil {
 				log.Printf("Failed to store NFT for %s: %v", user.Email, err)
 				return
 			} else {
