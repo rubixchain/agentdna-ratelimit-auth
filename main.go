@@ -19,20 +19,21 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/joho/godotenv/autoload"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	maxRequests  = 100
-	apiKeyHeader = "X-API-Key"
+	maxRequests            = 100
+	apiKeyHeader           = "X-API-Key"
 	agentDescriptionHeader = "X-Agent-Description"
-	agentRepoHeader = "X-Agent-Repo"
+	agentRepoHeader        = "X-Agent-Repo"
 )
 
 type User struct {
-	Email       string    `json:"email"`
-	APIKey      string    `json:"api_key"`
-	RequestCount int      `json:"request_count"`
-	CreatedAt   time.Time `json:"created_at"`
+	Email        string    `json:"email"`
+	APIKey       string    `json:"api_key"`
+	RequestCount int       `json:"request_count"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type RateLimiter struct {
@@ -44,8 +45,8 @@ type RateLimiter struct {
 
 // billablePaths contains endpoints that should consume from the quota.
 var billablePaths = map[string]bool{
-	"/api/execute-nft":            true,
-	"/api/deploy-nft":             true,
+	"/api/execute-nft": true,
+	"/api/deploy-nft":  true,
 }
 
 func isBillable(path string) bool {
@@ -78,9 +79,6 @@ func initConfig() (string, *url.URL) {
 	return dbFile, u
 }
 
-func generateAPIKey() string {
-	return uuid.NewString()
-}
 
 func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 	db, err := sql.Open("sqlite3", dbFile)
@@ -113,6 +111,11 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
         	agent_repo TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE IF NOT EXISTS admin (
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE INDEX IF NOT EXISTS idx_nft_id ON nfts(nft_id);
 		CREATE INDEX IF NOT EXISTS idx_nft_email ON nfts(email);
 	`)
@@ -129,26 +132,36 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 	}
 }
 
-// lookupUserByAPIKey returns User by API key.
-func (rl *RateLimiter) lookupUserByAPIKey(key string) (*User, error) {
-	var user User
-	err := rl.db.QueryRow(`
-		SELECT email, api_key, request_count, created_at
-		FROM users WHERE api_key = ?`, key).Scan(
-		&user.Email,
-		&user.APIKey,
-		&user.RequestCount,
-		&user.CreatedAt,
-	)
+func (rl *RateLimiter) checkAdminCredentials(username, password string) bool {
+	var storedHash string
+	err := rl.db.QueryRow("SELECT password_hash FROM admin WHERE username = ?", username).Scan(&storedHash)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("invalid API key")
+		return false
 	}
 	if err != nil {
-		return nil, fmt.Errorf("database error: %v", err)
+		log.Printf("Admin DB error: %v", err)
+		return false
 	}
-	return &user, nil
+
+	return bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil
 }
 
+func (rl *RateLimiter) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	user, pass, ok := r.BasicAuth()
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="admin"`)
+		http.Error(w, `{"error":"Basic authentication credentials required"}`, http.StatusUnauthorized)
+		return false
+	}
+
+	if !rl.checkAdminCredentials(user, pass) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="admin"`)
+		http.Error(w, `{"error":"Invalid admin credentials"}`, http.StatusUnauthorized)
+		return false
+	}
+	
+	return true
+}
 
 // validateAndIncrement: checks key + count and increments atomically.
 func (rl *RateLimiter) validateAndIncrement(key string) (*User, error) {
@@ -213,20 +226,20 @@ func (rl *RateLimiter) validateAndIncrement(key string) (*User, error) {
 
 // nftPayload models the deploy-nft request body.
 type nftPayload struct {
-	NFT        string  `json:"nft"`
-	DID        string  `json:"did"`
-	QuorumType int     `json:"quorum_type"`
-	NFTValue   float64 `json:"nft_value"`
-	NFTData    string  `json:"nft_data"`
-	NFTMetadata string `json:"nft_metadata"`
-	NFTFileName string `json:"nft_file_name"`
+	NFT         string  `json:"nft"`
+	DID         string  `json:"did"`
+	QuorumType  int     `json:"quorum_type"`
+	NFTValue    float64 `json:"nft_value"`
+	NFTData     string  `json:"nft_data"`
+	NFTMetadata string  `json:"nft_metadata"`
+	NFTFileName string  `json:"nft_file_name"`
 }
 
 // extractAgentName parses nftData string like "{'agent_name': 'mike'}" to extract agent_name.
 func extractAgentName(nftData string) string {
 	// Convert Python-style single quotes to JSON double quotes
 	normalized := strings.ReplaceAll(nftData, "'", "\"")
-	
+
 	var obj map[string]interface{}
 	if err := json.Unmarshal([]byte(normalized), &obj); err != nil {
 		return ""
@@ -324,6 +337,12 @@ func (rl *RateLimiter) adminAddUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+
+	//  Require admin auth
+	if !rl.requireAdminAuth(w, r) {
+		return
+	}
+
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -338,14 +357,13 @@ func (rl *RateLimiter) adminAddUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if email already exists (email is PRIMARY KEY)
-	var existingEmail string
-	err := rl.db.QueryRow("SELECT email FROM users WHERE email = ?", req.Email).Scan(&existingEmail)
+	var existingAPIKey string
+	err := rl.db.QueryRow("SELECT api_key FROM users WHERE email = ?", req.Email).Scan(&existingAPIKey)
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{
-			"error":   "email_already_exists",
-			"message": fmt.Sprintf("Email %s already registered", req.Email),
+			"api_key": existingAPIKey,
+			"message": "API key already exists",
 		})
 		return
 	}
@@ -463,38 +481,38 @@ func (rl *RateLimiter) getBalanceCredits(w http.ResponseWriter, r *http.Request)
 	}
 
 	var requestCount int
-    row := rl.db.QueryRow("SELECT request_count FROM users WHERE email = ?", email)
-    if err := row.Scan(&requestCount); err != nil {
-        if err == sql.ErrNoRows {
-            http.Error(w, "User not found", http.StatusNotFound)
-            return
-        }
-        http.Error(w, "Database error", http.StatusInternalServerError)
-        return
-    }
+	row := rl.db.QueryRow("SELECT request_count FROM users WHERE email = ?", email)
+	if err := row.Scan(&requestCount); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"email":  email,
+		"email":   email,
 		"credits": requestCount,
 	})
 }
 
 func main() {
-    dbFile, backendURL := initConfig()
-    rl := NewRateLimiter(dbFile, backendURL)
-    defer rl.db.Close()
+	dbFile, backendURL := initConfig()
+	rl := NewRateLimiter(dbFile, backendURL)
+	defer rl.db.Close()
 
-    // Management endpoints FIRST (specific routes)
-    http.HandleFunc("/healthz", rl.healthz)
-    http.HandleFunc("/admin/add-user", rl.adminAddUser)
-    http.HandleFunc("/get-nft-by-email", rl.getNFTByEmail)
+	// Management endpoints FIRST (specific routes)
+	http.HandleFunc("/healthz", rl.healthz)
+	http.HandleFunc("/admin/add-user", rl.adminAddUser)
+	http.HandleFunc("/get-nft-by-email", rl.getNFTByEmail)
 	http.HandleFunc("/get-nfts", rl.getNFTs)
 	http.HandleFunc("/get-balance-credits", rl.getBalanceCredits)
 
-    // Catch ALL OTHER blockchain traffic LAST (catch-all)
-    http.HandleFunc("/", rl.proxyHandler)  // ← Only non-management paths
-    
-    log.Printf("Rate limiter + NFT proxy starting on :8080 -> %s", backendURL.String())
-    log.Fatal(http.ListenAndServe(":8080", nil))
+	// Catch ALL OTHER blockchain traffic LAST (catch-all)
+	http.HandleFunc("/", rl.proxyHandler) // ← Only non-management paths
+
+	log.Printf("Rate limiter + NFT proxy starting on :8080 -> %s", backendURL.String())
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
