@@ -491,10 +491,16 @@ func (rl *RateLimiter) getBalanceCredits(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	creditBalance := maxRequests - requestCount
+	if creditBalance < 0 {
+		http.Error(w, "Unexpected error occured as credit balance value is invalid", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"email":   email,
-		"credits": requestCount,
+		"credit_balance": creditBalance,
 	})
 }
 
