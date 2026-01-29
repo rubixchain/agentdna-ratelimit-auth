@@ -372,11 +372,14 @@ func (rl *RateLimiter) validateAndIncrement(key string) (*User, error) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	tx, _ := rl.db.Begin()
+	tx, err := rl.db.Begin()
+	if err != nil {
+		return nil, err
+	}
 	defer tx.Rollback()
 
 	var u User
-	err := tx.QueryRow(`SELECT email, api_key, request_count, created_at FROM users WHERE api_key = ?`, key).
+	err = tx.QueryRow(`SELECT email, api_key, request_count, created_at FROM users WHERE api_key = ?`, key).
 		Scan(&u.Email, &u.APIKey, &u.RequestCount, &u.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -482,7 +485,7 @@ func (rl *RateLimiter) getInteractions(c *gin.Context) {
 	for rows.Next() {
 		var hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause string
 		var epoch int
-		if err := rows.Scan(&hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause, epoch); err != nil {
+		if err := rows.Scan(&hostId, &hostDid, &hostName, &remoteDid, &remoteName, &intrusionCause, &epoch); err != nil {
 			c.JSON(500, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
@@ -532,7 +535,7 @@ func (rl *RateLimiter) getToolInteractions(c *gin.Context) {
 	for rows.Next() {
 		var hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause string
 		var epoch int
-		if err := rows.Scan(&hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause, epoch); err != nil {
+		if err := rows.Scan(&hostId, &hostDid, &hostName, &remoteDid, &remoteName, &intrusionCause, &epoch); err != nil {
 			c.JSON(500, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
@@ -559,7 +562,7 @@ func (rl *RateLimiter) getToolInteractions(c *gin.Context) {
 
 func (rl *RateLimiter) getEcosystemMetrics(c *gin.Context) {
 	// total_interactions
-	totalInteractionsRows, err := rl.db.Query("SELECT COUNT(*) from interaction")
+	totalInteractionsRows, err := rl.db.Query("SELECT COUNT() from interaction")
 	if err != nil {
 		c.JSON(500, Response{
 			Status:  false,
@@ -680,7 +683,7 @@ func (rl *RateLimiter) getEcosystemMetricsByEmail(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var agents []string
+	var agents []interface{}
 	for rows.Next() {
 		var nftID string
 		if err := rows.Scan(&nftID); err != nil {
@@ -694,79 +697,81 @@ func (rl *RateLimiter) getEcosystemMetricsByEmail(c *gin.Context) {
 		agents = append(agents, nftID)
 	}
 
-	agentListStr := strings.Join(agents, ",")
+	var totalInteractions int = 0
+	if len(agents) > 0 {
+		totalInteractionClause := "(" + strings.Repeat("?,", len(agents)-1) + "?)"
 
-	// total_interactions
-	totalInteractionsRows, err := rl.db.Query("SELECT COUNT(*) from interaction WHERE host_id IN (?)", agentListStr)
-	if err != nil {
-		c.JSON(500, Response{
-			Status: false,
-			Message: fmt.Sprintf("failed to fetch total interactions for email: %v", email),
-		})
-		return
-	}
-	defer totalInteractionsRows.Close()
-
-	var totalInteractions int
-	if totalInteractionsRows.Next() {
-		if err := totalInteractionsRows.Scan(&totalInteractions); err != nil {
+		// total_interactions
+		totalInteractionsRows, err := rl.db.Query("SELECT COUNT(*) from interaction WHERE host_id IN "+ totalInteractionClause, agents...)
+		if err != nil {
 			c.JSON(500, Response{
 				Status: false,
-				Message: fmt.Sprintf("failed to scan total interactions for email: %v", email),
+				Message: fmt.Sprintf("failed to fetch total interactions for email: %v", email),
 			})
 			return
+		}
+		defer totalInteractionsRows.Close()
+
+		if totalInteractionsRows.Next() {
+			if err := totalInteractionsRows.Scan(&totalInteractions); err != nil {
+				c.JSON(500, Response{
+					Status: false,
+					Message: fmt.Sprintf("failed to scan total interactions for email: %v", email),
+				})
+				return
+			}
 		}
 	}
 
 	// total_intrusions
-	totalIntrusionsRows, err := rl.db.Query("SELECT COUNT(*) from interaction where host_id IN (?) AND intrusion_cause != ''", agentListStr)
-	if err != nil {
-		c.JSON(500, Response{
-			Status: false,
-			Message: fmt.Sprintf("failed to fetch total intrusions for email: %v", email),
-		})
-		return
-	}
-	defer totalIntrusionsRows.Close()
-
-	var totalIntrusions int
-	if totalIntrusionsRows.Next() {
-		if err := totalIntrusionsRows.Scan(&totalIntrusions); err != nil {
+	var totalIntrusions int = 0
+	if len(agents) > 0 {
+		placeholderTotalIntrusions := "(" + strings.Repeat("?,", len(agents)-1) + "?)"
+		totalIntrusionsRows, err := rl.db.Query("SELECT COUNT(*) from interaction where host_id IN "+placeholderTotalIntrusions+" AND intrusion_cause != ''", agents...)
+		if err != nil {
 			c.JSON(500, Response{
 				Status: false,
-				Message: fmt.Sprintf("failed to scan total intrusions for email: %v", email),
+				Message: fmt.Sprintf("failed to fetch total intrusions for email: %v", email),
 			})
 			return
 		}
-	}
+		defer totalIntrusionsRows.Close()
 
+		if totalIntrusionsRows.Next() {
+			if err := totalIntrusionsRows.Scan(&totalIntrusions); err != nil {
+				c.JSON(500, Response{
+					Status: false,
+					Message: fmt.Sprintf("failed to scan total intrusions for email: %v", email),
+				})
+				return
+			}
+		}
+	}
 	// total_agents
 	totalAgents := len(agents)
 
 	// interacted_tools
-	interactedToolsRows, err := rl.db.Query(`
-	SELECT COUNT(*) FROM (
-		SELECT DISTINCT(remote_did) AS tools
-		FROM interaction
-		WHERE host_did IN (?)
-	);`, agentListStr)
-	if err != nil {
-		c.JSON(500, Response{
-			Status: false,
-			Message: fmt.Sprintf("failed to fetch interacted tools for email: %v", email),
-		})
-		return
-	}
-	defer interactedToolsRows.Close()
-
-	var totalInteractedTools int
-	if interactedToolsRows.Next() {
-		if err := interactedToolsRows.Scan(&totalInteractedTools); err != nil {
+	var totalInteractedTools int = 0
+	if len(agents) > 0 {
+		placeholderInteractedTools := "(" + strings.Repeat("?,", len(agents)-1) + "?)"
+		interactedToolsRows, err := rl.db.Query("SELECT COUNT(*) FROM (SELECT DISTINCT remote_did AS tools FROM interaction WHERE host_id IN "+placeholderInteractedTools +") AS t", agents...)
+		if err != nil {
 			c.JSON(500, Response{
 				Status: false,
-				Message: fmt.Sprintf("failed to scan interacted tools for email: %v", email),
+				Message: fmt.Sprintf("failed to fetch interacted tools for email: %v, err: %v", email, err),
 			})
 			return
+		}
+		defer interactedToolsRows.Close()
+
+		if interactedToolsRows.Next() {
+			if err := interactedToolsRows.Scan(&totalInteractedTools); err != nil {
+				c.JSON(500, Response{
+					Status: false,
+					Message: fmt.Sprintf("failed to scan interacted tools for email: %v", email),
+				})
+				return
+			}
 		}
 	}
 
@@ -804,7 +809,7 @@ func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var agents []string
+	var agents []interface{}
 	for rows.Next() {
 		var nftID string
 		if err := rows.Scan(&nftID); err != nil {
@@ -818,13 +823,21 @@ func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 		agents = append(agents, nftID)
 	}
 
-	agentListStr := strings.Join(agents, ",")
+	if len(agents) == 0 {
+		c.JSON(200, Response{
+			Status: true,
+			Data:   []*agentInteraction{},
+		})
+		return
+	}
 
-	userAgentsRow, err := rl.db.Query("SELECT * from interaction WHERE host_id IN (?) ORDER BY epoch DESC", agentListStr)
+	totalInteractionClause := "(" + strings.Repeat("?,", len(agents)-1) + "?)"
+
+	userAgentsRow, err := rl.db.Query("SELECT * from interaction WHERE host_id IN "+totalInteractionClause+" ORDER BY epoch DESC", agents...)
 	if err != nil {
 		c.JSON(500, Response{
 			Status: false,
-			Message: fmt.Sprintf("failed to fetch user's interaction by email: %v", email),
+			Message: fmt.Sprintf("failed to fetch user's interaction by email: %v, err: %v", email, err),
 		})
 		return
 	}
@@ -834,7 +847,7 @@ func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 	for userAgentsRow.Next() {
 		var hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause string
 		var epoch int
-		if err := userAgentsRow.Scan(&hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause, epoch); err != nil {
+		if err := userAgentsRow.Scan(&hostId, &hostDid, &hostName, &remoteDid, &remoteName, &intrusionCause, &epoch); err != nil {
 			c.JSON(500, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
@@ -877,13 +890,14 @@ func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
 		})
 		return
 	}
+	defer rows.Close()
 
 	var agentInteractions []*agentInteraction = make([]*agentInteraction, 0)
 
 	for rows.Next() {
 		var hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause string
 		var epoch int
-		if err := rows.Scan(&hostId, hostDid, hostName, remoteDid, remoteName, intrusionCause, epoch); err != nil {
+		if err := rows.Scan(&hostId, &hostDid, &hostName, &remoteDid, &remoteName, &intrusionCause, &epoch); err != nil {
 			c.JSON(500, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
