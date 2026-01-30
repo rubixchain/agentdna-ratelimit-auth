@@ -93,8 +93,7 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS nfts (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			nft_id TEXT,
+			nft_id PRIMARY KEY TEXT,
 			nft_name TEXT,
 			email TEXT,
 			agent_description TEXT,
@@ -231,8 +230,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 					Message: fmt.Sprintf("failed to store NFT: %v", err),
 				})
 				return
-			} else {
-				log.Printf("✅ Stored NFT: id=%s, name=%s, email=%s", payload.NFT, agentName, user.Email)
 			}
 		}
 	}
@@ -242,6 +239,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Read and buffer the body
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
+			log.Println("T1: ", err)
 			http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
 			return
 		}
@@ -253,6 +251,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Parse NFT payload
 		var payload nftPayload
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			log.Println("T2: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: "failed to unmarshal payload for Execute NFT API",
@@ -263,6 +262,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Store remote info
 		remoteInfoList, err := extractRemoteInfo(payload)
 		if err != nil {
+			log.Println("T3: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to fetch remote info, err: %v", err),
@@ -278,6 +278,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 					remoteInfo.Name,
 					remoteInfo.Did,
 				)
+				log.Printf("T4: %s, error: %v", errMsg, err)
 				c.JSON(http.StatusInternalServerError, Response{
 					Status:  false,
 					Message: errMsg,
@@ -289,6 +290,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Store interactions
 		interactionList, err := extractAgentInteractions(payload, rl.db)
 		if err != nil {
+			log.Println("T5: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to fetch agent interactions, err: %v", err),
@@ -297,6 +299,7 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		}
 
 		 if err := rl.storeInteractions(interactionList); err != nil {
+			log.Println("T6: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to store agent interactions, err: %v", err),
@@ -415,7 +418,7 @@ func (rl *RateLimiter) validateAndIncrement(key string) (*User, error) {
 
 func (rl *RateLimiter) storeNFT(email, nftID, nftName, agentDescription, agentRepo string) error {
 	_, err := rl.db.Exec(
-		`INSERT INTO nfts (nft_id, nft_name, email, agent_description, agent_repo) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO nfts (nft_id, nft_name, email, agent_description, agent_repo) VALUES (?, ?, ?, ?, ?)`,
 		nftID,
 		nftName,
 		email,
