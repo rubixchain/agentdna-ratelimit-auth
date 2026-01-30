@@ -100,6 +100,19 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 			username TEXT UNIQUE,
 			password_hash TEXT
 		);
+		CREATE TABLE IF NOT EXISTS interaction (
+            host_id TEXT,
+            host_did TEXT,
+            host_name TEXT,
+            remote_did TEXT,
+            remote_name TEXT,
+            intrusion_cause TEXT,
+            epoch INTEGER
+        );
+		CREATE TABLE IF NOT EXISTS remote (
+            did TEXT PRIMARY KEY,
+            name TEXT
+        );
 	`)
 	if err != nil {
 		log.Fatal(err)
