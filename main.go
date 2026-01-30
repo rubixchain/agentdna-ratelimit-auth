@@ -957,8 +957,10 @@ func main() {
 	r.GET("/interactions/user/:email/agents", rl.getUserAgents)
 	r.GET("/metrics", rl.getEcosystemMetrics)
 	r.GET("/metrics/:email", rl.getEcosystemMetricsByEmail)
-	// catch-all (same behavior as before)
-	r.Any("/", rl.proxyHandler)
+	
+	// Proxy Rubix related endpoints
+	api := r.Group("/api")
+	api.Any("/*path", rl.proxyHandler)
 
 	log.Printf("Starting on :%s", serverPort)
 	r.Run(":" + serverPort)
