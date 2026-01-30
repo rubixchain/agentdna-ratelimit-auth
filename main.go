@@ -542,7 +542,7 @@ func (rl *RateLimiter) getInteractions(c *gin.Context) {
 	})
 }
 
-func (rl *RateLimiter) getToolInteractions(c *gin.Context) {
+func (rl *RateLimiter) getToolInteractionsByDID(c *gin.Context) {
 	w := http.ResponseWriter(c.Writer)
 	enableCors(&w)
 
@@ -827,6 +827,8 @@ func (rl *RateLimiter) getEcosystemMetricsByEmail(c *gin.Context) {
 	})
 }
 
+
+
 func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 	w := http.ResponseWriter(c.Writer)
 	enableCors(&w)
@@ -916,7 +918,7 @@ func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 	})
 }
 
-func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
+func (rl *RateLimiter) getAgentInteractionsByDID(c *gin.Context) {
 	w := http.ResponseWriter(c.Writer)
 	enableCors(&w)
 
@@ -969,6 +971,184 @@ func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
 	})
 }
 
+type agentInteractionMetric struct {
+	AgentName string `json:"agent_name"`
+	AgentDid string `json:"agent_did"`
+	TotatInteractions int `json:"total_interactions"`
+	TotalIntrusions int `json:"total_intrusions"`
+	ToolsInteracted int `json:"tools_interacted"`
+}
+
+func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
+	rows, err := rl.db.Query("SELECT nft_id from nfts")
+	if err != nil {
+		c.JSON(500, Response{
+			Status:  false,
+			Message: fmt.Sprintf("failed to fetch interactions, err: %v", err),
+		})
+		return
+	}
+	defer rows.Close()
+
+	var agentInteractions []*agentInteractionMetric = make([]*agentInteractionMetric, 0)
+
+	for rows.Next() {
+		var agentID string
+
+		if err := rows.Scan(&agentID); err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
+			})
+			return
+		}
+
+		var agentName string
+		err = rl.db.QueryRow("SELECT host_name from interaction WHERE host_id = ?", agentID).Scan(&agentName)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch agent name for agent %s, err: %v", agentID, err),
+			})
+			return
+		}
+
+		var agentDid string
+		err = rl.db.QueryRow("SELECT host_did from interaction WHERE host_id = ?", agentID).Scan(&agentDid)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch agent DID for agent %s, err: %v", agentID, err),
+			})
+			return
+		}
+
+		var totalInteractions int
+		err = rl.db.QueryRow("SELECT COUNT(*) from interaction WHERE host_id = ?", agentID).Scan(&totalInteractions)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch total interactions for agent %s, err: %v", agentID, err),
+			})
+			return
+		}
+
+		var totalIntrusions int
+		err = rl.db.QueryRow("SELECT COUNT(*) from interaction WHERE host_id = ? AND intrusion_cause != ''", agentID).Scan(&totalIntrusions)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch total intrusions for agent %s, err: %v", agentID, err),
+			})
+			return
+		}
+
+		var toolsIntracted int
+		err = rl.db.QueryRow("SELECT COUNT(DISTINCT remote_name) from interaction WHERE host_id = ?", agentID).Scan(&toolsIntracted)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch tools inctracted for agent %s, err: %v", agentID, err),
+			})
+			return
+		}
+
+		agentInteractions = append(agentInteractions, &agentInteractionMetric{
+			AgentName: agentName,
+			AgentDid:  agentDid,
+			TotalIntrusions: totalIntrusions,
+			ToolsInteracted: toolsIntracted,
+			TotatInteractions: totalInteractions,
+		})
+	}
+
+	c.JSON(200, Response{
+		Status: true,
+		Data: agentInteractions,
+	})
+}
+
+type toolInteractionMetric struct {
+	ToolName string `json:"tool_name"`
+	ToolDid string `json:"tool_did"`
+	TotalInteractions int `json:"total_interactions"`
+	TotalIntrusions int `json:"total_intrusions"`
+	AgentsInteracted int `json:"agents_interacted"`
+}
+
+func (rl *RateLimiter) getToolsInteractions(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
+	rows, err := rl.db.Query("SELECT * from remote")
+	if err != nil {
+		c.JSON(500, Response{
+			Status:  false,
+			Message: fmt.Sprintf("failed to fetch tools, err: %v", err),
+		})
+		return
+	}
+	defer rows.Close()
+
+	var toolInteractions []*toolInteractionMetric = make([]*toolInteractionMetric, 0)
+	for rows.Next() {
+		var toolDid, toolName string
+		if err := rows.Scan(&toolDid, &toolName); err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to capture info for tools, err: %v", err),
+			})
+			return
+		}
+
+		var totalInteractions int
+		err = rl.db.QueryRow("SELECT COUNT(*) from interaction WHERE remote_did = ?", toolDid).Scan(&totalInteractions)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch total interactions for tool %s, err: %v", toolName, err),
+			})
+			return
+		}
+
+		var totalIntrusions int
+		err = rl.db.QueryRow("SELECT COUNT(*) from interaction WHERE remote_did = ? AND intrusion_cause != ''", toolDid).Scan(&totalIntrusions)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch total intrusions for tool %s, err: %v", toolName, err),
+			})
+			return
+		}
+
+		var agentsInteracted int
+		err = rl.db.QueryRow("SELECT COUNT(DISTINCT host_name) from interaction WHERE remote_did = ?", toolDid).Scan(&agentsInteracted)
+		if err != nil {
+			c.JSON(500, Response{
+				Status:  false,
+				Message: fmt.Sprintf("failed to fetch agents interacted for tool %s, err: %v", toolName, err),
+			})
+			return
+		}
+
+		toolInteractions = append(toolInteractions, &toolInteractionMetric{
+			ToolName: toolName,
+			ToolDid: toolDid,
+			TotalInteractions: totalInteractions,
+			TotalIntrusions: totalIntrusions,
+			AgentsInteracted: agentsInteracted,
+		})
+	}
+
+	c.JSON(200, Response{
+		Status: true,
+		Data: toolInteractions,
+	})
+}
+
 func main() {
 	dbFile, backendURL, serverPort := initConfig()
 	rl := NewRateLimiter(dbFile, backendURL)
@@ -981,9 +1161,11 @@ func main() {
 	r.POST("/admin/add-user", rl.adminAddUser)
 	r.GET("/get-balance-credits", rl.getBalanceCredits)
 	r.GET("/interactions", rl.getInteractions)
-	r.GET("/interactions/tool/:did", rl.getToolInteractions)
-	r.GET("/interactions/agent/:did", rl.getAgentInteractions)
+	r.GET("/interactions/tool/:did", rl.getToolInteractionsByDID)
+	r.GET("/interactions/agent/:did", rl.getAgentInteractionsByDID)
 	r.GET("/interactions/user/:email/agents", rl.getUserAgents)
+	r.GET("/agents", rl.getAgentInteractions)
+	r.GET("/tools", rl.getToolsInteractions)
 	r.GET("/metrics", rl.getEcosystemMetrics)
 	r.GET("/metrics/:email", rl.getEcosystemMetricsByEmail)
 	
