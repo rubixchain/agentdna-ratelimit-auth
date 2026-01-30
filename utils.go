@@ -42,7 +42,7 @@ func extractRemoteInfo(payload nftPayload) ([]*remoteInfo, error) {
 		return nil, fmt.Errorf("extractRemoteInfo: 'response' attribute doesn't exists")
 	}
 
-	remote_reponses, ok := obj["responses"].([]map[string]interface{})
+	remote_reponses, ok := obj["responses"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("extractRemoteInfo: unable to type infer `responses` attribute")
 	}
@@ -50,16 +50,21 @@ func extractRemoteInfo(payload nftPayload) ([]*remoteInfo, error) {
 	var remoteInfoList []*remoteInfo = make([]*remoteInfo, 0)
 
 	for _, response := range remote_reponses {
-		if _, ok := response["agent"]; !ok {
+		responseObj, ok := response.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("extractRemoteInfo: unable to type infer `response` attribute")
+		}
+
+		if _, ok := responseObj["agent"]; !ok {
 			return nil, fmt.Errorf("extractRemoteInfo: `agent` attribute is not found within 'response' attribute")
 		}
 
-		agentName, ok := response["agent"].(string)
+		agentName, ok := responseObj["agent"].(string)
 		if !ok {
 			return nil, fmt.Errorf("extractRemoteInfo: `agent` attribute is not of type string.")
 		}
 
-		if _, ok := response["agent_did"]; !ok {
+		if _, ok := responseObj["agent_did"]; !ok {
 			remoteInfoList = append(remoteInfoList, &remoteInfo{
 				Name: agentName,
 				Did:  agentName,
@@ -67,7 +72,7 @@ func extractRemoteInfo(payload nftPayload) ([]*remoteInfo, error) {
 			continue
 		}
 
-		agentDid, ok := response["agent_did"].(string)
+		agentDid, ok := responseObj["agent_did"].(string)
 		if !ok {
 			return nil, fmt.Errorf("extractRemoteInfo: 'agent_did' attribute is not type string")
 		}
