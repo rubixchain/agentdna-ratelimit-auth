@@ -113,14 +113,32 @@ func extractAgentInteractions(payload nftPayload, db *sql.DB) ([]*agentInteracti
 		return nil, fmt.Errorf("extractAgentInteractions: unable to type infer `verification` attribute")
 	}
 
-	trustIssues, ok := verifictionObj["trust_issues"].([]string)
+	trustIssuesRaw, ok := verifictionObj["trust_issues"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("extractAgentInteractions: unable to type infer `trust_issues` attribute")		
 	}
 
-	responses, ok := obj["responses"].([]map[string]interface{})
+	var trustIssues []string = make([]string, 0)
+	for _, issue := range trustIssuesRaw {
+		issueStr, ok := issue.(string)
+		if !ok {
+			return nil, fmt.Errorf("extractAgentInteractions: unable to type infer `trust_issues` item")
+		}
+		trustIssues = append(trustIssues, issueStr)
+	}
+
+	responsesRaw, ok := obj["responses"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("extractAgentInteractions: unable to type infer `responses` attribute")
+	}
+
+	var responses []map[string]interface{} = make([]map[string]interface{}, 0)
+	for _, response := range responsesRaw {
+		responseObj, ok := response.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("extractAgentInteractions: unable to type infer `response` item")
+		}
+		responses = append(responses, responseObj)
 	}
 
 	rows, err := db.Query("SELECT nft_name FROM nfts WHERE nft_id = ?", agentID)
