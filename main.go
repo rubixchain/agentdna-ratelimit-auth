@@ -93,7 +93,7 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS nfts (
-			nft_id PRIMARY KEY TEXT,
+			nft_id TEXT PRIMARY KEY,
 			nft_name TEXT,
 			email TEXT,
 			agent_description TEXT,
