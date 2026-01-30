@@ -38,13 +38,13 @@ func extractRemoteInfo(payload nftPayload) ([]*remoteInfo, error) {
 		return nil, fmt.Errorf("extractRemoteInfo: failed to unmarshall nft data, err: %v", err)
 	}
 
-	if _, ok := obj["response"]; !ok {
+	if _, ok := obj["responses"]; !ok {
 		return nil, fmt.Errorf("extractRemoteInfo: 'response' attribute doesn't exists")
 	}
 
-	remote_reponses, ok := obj["response"].([]map[string]interface{})
+	remote_reponses, ok := obj["responses"].([]map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("extractRemoteInfo: unable to type infer `response` attribute")
+		return nil, fmt.Errorf("extractRemoteInfo: unable to type infer `responses` attribute")
 	}
 
 	var remoteInfoList []*remoteInfo = make([]*remoteInfo, 0)
@@ -62,7 +62,7 @@ func extractRemoteInfo(payload nftPayload) ([]*remoteInfo, error) {
 		if _, ok := response["agent_did"]; !ok {
 			remoteInfoList = append(remoteInfoList, &remoteInfo{
 				Name: agentName,
-				Did:  "",
+				Did:  agentName,
 			})
 			continue
 		}
