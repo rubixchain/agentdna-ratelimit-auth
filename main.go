@@ -983,7 +983,7 @@ func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
 	w := http.ResponseWriter(c.Writer)
 	enableCors(&w)
 
-	rows, err := rl.db.Query("SELECT nft_id from nfts")
+	rows, err := rl.db.Query("SELECT nft_id, nft_name from nfts")
 	if err != nil {
 		c.JSON(500, Response{
 			Status:  false,
@@ -996,22 +996,12 @@ func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
 	var agentInteractions []*agentInteractionMetric = make([]*agentInteractionMetric, 0)
 
 	for rows.Next() {
-		var agentID string
+		var agentID, agentName string
 
-		if err := rows.Scan(&agentID); err != nil {
+		if err := rows.Scan(&agentID, &agentName); err != nil {
 			c.JSON(500, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to capture info for interactions, err: %v", err),
-			})
-			return
-		}
-
-		var agentName string
-		err = rl.db.QueryRow("SELECT host_name from interaction WHERE host_id = ?", agentID).Scan(&agentName)
-		if err != nil {
-			c.JSON(500, Response{
-				Status:  false,
-				Message: fmt.Sprintf("failed to fetch agent name for agent %s, err: %v", agentID, err),
 			})
 			return
 		}
