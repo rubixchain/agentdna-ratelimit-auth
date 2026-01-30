@@ -53,6 +53,12 @@ func isBillable(path string) bool {
 	return billablePaths[path]
 }
 
+func enableCors(w *http.ResponseWriter) {
+	(*w).Header().Set("Access-Control-Allow-Origin", "*")
+	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization")
+}
+
 // initConfig returns the database file path, rubix Node URL and server port from environment variables.
 func initConfig() (string, *url.URL, string) {
 	dbFile := os.Getenv("API_USAGE_DB")
@@ -128,10 +134,15 @@ func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
 }
 
 func (rl *RateLimiter) healthz(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
 func (rl *RateLimiter) adminAddUser(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	if c.Request.Method != http.MethodPost {
 		c.AbortWithStatus(http.StatusMethodNotAllowed)
 		return
@@ -239,7 +250,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Read and buffer the body
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Println("T1: ", err)
 			http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
 			return
 		}
@@ -251,7 +261,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Parse NFT payload
 		var payload nftPayload
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			log.Println("T2: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: "failed to unmarshal payload for Execute NFT API",
@@ -262,7 +271,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Store remote info
 		remoteInfoList, err := extractRemoteInfo(payload)
 		if err != nil {
-			log.Println("T3: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to fetch remote info, err: %v", err),
@@ -278,7 +286,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 					remoteInfo.Name,
 					remoteInfo.Did,
 				)
-				log.Printf("T4: %s, error: %v", errMsg, err)
 				c.JSON(http.StatusInternalServerError, Response{
 					Status:  false,
 					Message: errMsg,
@@ -290,7 +297,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		// Store interactions
 		interactionList, err := extractAgentInteractions(payload, rl.db)
 		if err != nil {
-			log.Println("T5: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to fetch agent interactions, err: %v", err),
@@ -299,7 +305,6 @@ func (rl *RateLimiter) proxyHandler(c *gin.Context) {
 		}
 
 		 if err := rl.storeInteractions(interactionList); err != nil {
-			log.Println("T6: ", err)
 			c.JSON(http.StatusInternalServerError, Response{
 				Status:  false,
 				Message: fmt.Sprintf("failed to store agent interactions, err: %v", err),
@@ -355,6 +360,9 @@ func (rl *RateLimiter) getNFTByEmail(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getBalanceCredits(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	email := c.Query("email")
 	if email == "" {
 		c.JSON(400, Response{
@@ -491,6 +499,9 @@ func (rl *RateLimiter) storeInteractions(interactionList []*agentInteraction) er
 
 
 func (rl *RateLimiter) getInteractions(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	rows, err := rl.db.Query("SELECT * FROM interaction ORDER BY epoch DESC")
 	if err != nil {
 		c.JSON(500, Response{
@@ -532,6 +543,9 @@ func (rl *RateLimiter) getInteractions(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getToolInteractions(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	toolDID := c.Param("did")
 	if toolDID == "" {
 		c.JSON(400, Response{
@@ -582,6 +596,9 @@ func (rl *RateLimiter) getToolInteractions(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getEcosystemMetrics(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	// total_interactions
 	totalInteractionsRows, err := rl.db.Query("SELECT COUNT() from interaction")
 	if err != nil {
@@ -682,6 +699,9 @@ func (rl *RateLimiter) getEcosystemMetrics(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getEcosystemMetricsByEmail(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	email := c.Param("email")
 	if email == "" {
 		c.JSON(400, Response{
@@ -808,6 +828,9 @@ func (rl *RateLimiter) getEcosystemMetricsByEmail(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getUserAgents(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	email := c.Param("email")
 	if email == "" {
 		c.JSON(400, Response{
@@ -894,6 +917,9 @@ func (rl *RateLimiter) getUserAgents(c *gin.Context) {
 }
 
 func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
+	w := http.ResponseWriter(c.Writer)
+	enableCors(&w)
+
 	agentDID := c.Param("did")
 	if agentDID == "" {
 		c.JSON(400, Response{
