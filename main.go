@@ -53,9 +53,11 @@ func isBillable(path string) bool {
 	return billablePaths[path]
 }
 
-func initConfig() (string, *url.URL) {
+// initConfig returns the database file path, rubix Node URL and server port from environment variables.
+func initConfig() (string, *url.URL, string) {
 	dbFile := os.Getenv("API_USAGE_DB")
 	backendURLStr := os.Getenv("RUBIX_NODE_URL")
+	serverPort := os.Getenv("SERVER_PORT")
 
 	if dbFile == "" {
 		log.Fatal("API_USAGE_DB environment variable is required")
@@ -63,13 +65,16 @@ func initConfig() (string, *url.URL) {
 	if backendURLStr == "" {
 		log.Fatal("RUBIX_NODE_URL environment variable is required")
 	}
+	if serverPort == "" {
+		log.Fatal("SERVER_PORT environment variable is required")
+	}
 
-	u, err := url.Parse(backendURLStr)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	parsedRubixNodeURL, err := url.Parse(backendURLStr)
+	if err != nil || (parsedRubixNodeURL.Scheme != "http" && parsedRubixNodeURL.Scheme != "https") || parsedRubixNodeURL.Host == "" {
 		log.Fatalf("RUBIX_NODE_URL invalid format: %s", backendURLStr)
 	}
 
-	return dbFile, u
+	return dbFile, parsedRubixNodeURL, serverPort
 }
 
 func NewRateLimiter(dbFile string, backendURL *url.URL) *RateLimiter {
@@ -936,7 +941,7 @@ func (rl *RateLimiter) getAgentInteractions(c *gin.Context) {
 }
 
 func main() {
-	dbFile, backendURL := initConfig()
+	dbFile, backendURL, serverPort := initConfig()
 	rl := NewRateLimiter(dbFile, backendURL)
 	defer rl.db.Close()
 
@@ -955,6 +960,6 @@ func main() {
 	// catch-all (same behavior as before)
 	r.Any("/", rl.proxyHandler)
 
-	log.Printf("Starting on :8080")
-	r.Run(":8080")
+	log.Printf("Starting on :%s", serverPort)
+	r.Run(":" + serverPort)
 }
